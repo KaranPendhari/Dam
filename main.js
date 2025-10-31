@@ -1,7 +1,7 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
-const path = require('path');
-const fs = require('fs');
-const { createWorker } = require('tesseract.js');
+const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
+const path = require("path");
+const fs = require("fs");
+const { PythonShell } = require("python-shell");
 
 let mainWindow;
 
@@ -10,224 +10,337 @@ function createWindow() {
     width: 800,
     height: 600,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
     },
   });
 
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile("index.html");
 }
 
 app.whenReady().then(() => {
   createWindow();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+  app.on("activate", () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
+
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") app.quit();
+});
+
+/**
+ * Parse Python script output and extract JSON
+ */
+function parsePythonOutput(results) {
+  console.log('Raw Python output:', results);
+  
+  const jsonStartIndex = results.findIndex(line => line.includes('---JSON-START---'));
+  const jsonEndIndex = results.findIndex(line => line.includes('---JSON-END---'));
+  
+  if (jsonStartIndex === -1 || jsonEndIndex === -1) {
+    throw new Error('JSON delimiters not found in Python output');
   }
-});
+  
+  const jsonLines = results.slice(jsonStartIndex + 1, jsonEndIndex);
+  const jsonString = jsonLines.join('').trim();
+  
+  if (!jsonString) {
+    throw new Error('Empty JSON string extracted');
+  }
+  
+  console.log('Extracted JSON string:', jsonString);
+  
+  try {
+    return JSON.parse(jsonString);
+  } catch (e) {
+    throw new Error(`Failed to parse JSON: ${e.message}. JSON string: ${jsonString.substring(0, 200)}`);
+  }
+}
 
-ipcMain.handle('process-folder', async () => {
-  mainWindow.webContents.send('status-update', 'Opening folder selection...');
+/**
+ * Process a file with Python NER script
+ */
+async function processFileWithPython(filePath) {
+  try {
+    // TODO: It is recommended to load the API key from a more secure location, such as an environment variable or a configuration file.
+    const results = await PythonShell.run("ner.py", {
+      args: [filePath],
+      pythonOptions: ['-u'], // Unbuffered output
+      env: {
+        GEMINI_API_KEY: "AIzaSyCANxzIJJkbBDjWGAo-Qnc7-PZSjeU7tGg"
+      }
+    });
+    
+    const parsed = parsePythonOutput(results);
+    
+    // Check if it's an array (expected format)
+    if (!Array.isArray(parsed)) {
+      throw new Error('Expected array from Python script');
+    }
+    
+    if (parsed.length === 0) {
+      throw new Error('Empty results array from Python script');
+    }
+    
+    const result = parsed[0];
+    
+    // Check for errors in the result
+    if (result.error) {
+      throw new Error(`Python script error: ${result.error}`);
+    }
+    
+    return result;
+    
+  } catch (error) {
+    console.error('Python processing error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Move file to destination (handles cross-device moves)
+ */
+function moveFile(sourcePath, destPath) {
+  try {
+    fs.renameSync(sourcePath, destPath);
+  } catch (err) {
+    if (err.code === "EXDEV") {
+      // Cross-device move - copy then delete
+      fs.copyFileSync(sourcePath, destPath);
+      fs.unlinkSync(sourcePath);
+    } else {
+      throw err;
+    }
+  }
+}
+
+/**
+ * Sanitize filename/folder name
+ */
+function sanitizeName(name) {
+  return name.replace(/[/\\?%*:|"<>]/g, "-").trim();
+}
+
+ipcMain.handle("process-folder", async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
-    properties: ['openDirectory'],
+    properties: ["openDirectory"],
   });
-
-  if (canceled || !filePaths || filePaths.length === 0) {
-    mainWindow.webContents.send('status-update', 'Folder selection canceled.');
-    return { success: false, message: 'Folder selection canceled.' };
+  
+  if (canceled || !filePaths?.length) {
+    return { success: false, message: "No folder selected." };
   }
 
   const folderPath = filePaths[0];
-  const sortedDocumentsDir = path.join(__dirname, 'Sorted Documents');
-  const unsortedDocumentsDir = path.join(__dirname, 'Unsorted Documents');
+  const sortedDir = path.join(__dirname, "Sorted Documents");
+  const unsortedDir = path.join(__dirname, "Unsorted Documents");
 
-  try {
-    if (!fs.existsSync(sortedDocumentsDir)) fs.mkdirSync(sortedDocumentsDir);
-    if (!fs.existsSync(unsortedDocumentsDir)) fs.mkdirSync(unsortedDocumentsDir);
-
-    const files = fs.readdirSync(folderPath);
-    mainWindow.webContents.send('status-update', `Found ${files.length} files. Starting batch processing...`);
-
-    for (const file of files) {
-      const filePath = path.join(folderPath, file);
-      mainWindow.webContents.send('status-update', `Processing: ${file}`);
-
-      try {
-        const worker = await createWorker('eng');
-        const { data: { text } } = await worker.recognize(filePath);
-        await worker.terminate();
-
-        let cleanedText = text.replace(/[^a-zA-Z0-9\s\/\-]/g, '').replace(/\s+/g, ' ').trim();
-        
-        let extractedName = 'N/A';
-        const nameRegex = /(?:[A-Z][a-z]+\s){1,3}[A-Z][a-z]+/; // Simplified name regex
-        let match = cleanedText.match(nameRegex);
-        if (match && match[0]) {
-            extractedName = match[0];
-        }
-
-        if (extractedName !== 'N/A') {
-          const sanitizedFolderName = extractedName.replace(/[/\\?%*:|"<>]/g, '-');
-          const userFolder = path.join(sortedDocumentsDir, sanitizedFolderName);
-          if (!fs.existsSync(userFolder)) {
-            fs.mkdirSync(userFolder, { recursive: true });
-          }
-          const destinationPath = path.join(userFolder, path.basename(filePath));
-          fs.renameSync(filePath, destinationPath);
-          mainWindow.webContents.send('status-update', `Sorted: ${file} -> ${sanitizedFolderName}`);
-        } else {
-          const destinationPath = path.join(unsortedDocumentsDir, path.basename(filePath));
-          fs.renameSync(filePath, destinationPath);
-          mainWindow.webContents.send('status-update', `Could not extract name from: ${file}. Moved to unsorted.`);
-        }
-      } catch (fileError) {
-        console.error(`Error processing ${file}:`, fileError);
-        const destinationPath = path.join(unsortedDocumentsDir, path.basename(filePath));
-        fs.renameSync(filePath, destinationPath); // Move to unsorted on error
-        mainWindow.webContents.send('status-update', `Error processing ${file}. Moved to unsorted.`);
-      }
-    }
-
-    const successMessage = 'Batch processing complete. All files have been sorted.';
-    mainWindow.webContents.send('status-update', successMessage);
-    return { success: true, message: successMessage };
-
-  } catch (error) {
-    console.error('An error occurred during batch processing:', error);
-    mainWindow.webContents.send('status-update', `Error: ${error.message}`);
-    return { success: false, message: error.message };
+  // Ensure directories exist
+  if (!fs.existsSync(sortedDir)) {
+    fs.mkdirSync(sortedDir, { recursive: true });
   }
+  if (!fs.existsSync(unsortedDir)) {
+    fs.mkdirSync(unsortedDir, { recursive: true });
+  }
+
+  const files = fs.readdirSync(folderPath).filter(file => {
+    const ext = path.extname(file).toLowerCase();
+    return ['.png', '.jpg', '.jpeg', '.pdf'].includes(ext);
+  });
+  
+  if (files.length === 0) {
+    mainWindow.webContents.send("status-update", "⚠️ No supported files found in folder.");
+    return { success: false, message: "No supported files found." };
+  }
+
+  mainWindow.webContents.send(
+    "status-update",
+    `Processing ${files.length} files...`
+  );
+
+  let successCount = 0;
+  let errorCount = 0;
+
+  for (const file of files) {
+    const filePath = path.join(folderPath, file);
+    mainWindow.webContents.send("status-update", `🔄 Processing: ${file}`);
+
+    try {
+      const result = await processFileWithPython(filePath);
+      const extractedName = result.name;
+
+      if (extractedName && typeof extractedName === 'string' && extractedName.trim()) {
+        // Create folder for this person
+        const sanitized = sanitizeName(extractedName);
+        const destinationFolder = path.join(sortedDir, sanitized);
+        
+        if (!fs.existsSync(destinationFolder)) {
+          fs.mkdirSync(destinationFolder, { recursive: true });
+        }
+
+        const destinationPath = path.join(destinationFolder, file);
+        moveFile(filePath, destinationPath);
+        
+        successCount++;
+        mainWindow.webContents.send(
+          "status-update",
+          `✅ Sorted: ${file} → ${sanitized}`
+        );
+      } else {
+        // No name found - move to unsorted
+        const destinationPath = path.join(unsortedDir, file);
+        moveFile(filePath, destinationPath);
+        
+        errorCount++;
+        mainWindow.webContents.send(
+          "status-update",
+          `⚠️ Could not extract name from ${file}, moved to Unsorted`
+        );
+      }
+      
+    } catch (err) {
+      console.error(`❌ Error processing ${file}:`, err);
+      
+      // Move to unsorted on error
+      try {
+        const destinationPath = path.join(unsortedDir, file);
+        moveFile(filePath, destinationPath);
+      } catch (moveErr) {
+        console.error(`Failed to move ${file} to unsorted:`, moveErr);
+      }
+      
+      errorCount++;
+      mainWindow.webContents.send(
+        "status-update",
+        `❌ Error processing ${file}: ${err.message}`
+      );
+    }
+  }
+
+  mainWindow.webContents.send(
+    "status-update",
+    `✅ Processing complete! Sorted: ${successCount}, Unsorted: ${errorCount}`
+  );
+  
+  return { success: true, sorted: successCount, unsorted: errorCount };
 });
 
-ipcMain.handle('process-document', async () => {
-  mainWindow.webContents.send('status-update', 'Opening file dialog...');
+ipcMain.handle("process-document", async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog({
-    properties: ['openFile'],
-    filters: [{ name: 'Images', extensions: ['png', 'jpg', 'jpeg'] }],
+    properties: ["openFile"],
+    filters: [
+      { name: "Images", extensions: ["png", "jpg", "jpeg"] },
+      { name: "PDF", extensions: ["pdf"] }
+    ],
   });
 
-  if (canceled || !filePaths || filePaths.length === 0) {
-    mainWindow.webContents.send('status-update', 'File selection canceled.');
-    return { success: false, message: 'File selection canceled.' };
+  if (canceled || !filePaths?.length) {
+    return { success: false, message: "No file selected." };
   }
 
   const filePath = filePaths[0];
-  const sortedDocumentsDir = path.join(__dirname, 'Sorted Documents');
+  const fileName = path.basename(filePath);
+  const sortedDir = path.join(__dirname, "Sorted Documents");
+  const unsortedDir = path.join(__dirname, "Unsorted Documents");
+
+  // Ensure directories exist
+  if (!fs.existsSync(sortedDir)) {
+    fs.mkdirSync(sortedDir, { recursive: true });
+  }
+  if (!fs.existsSync(unsortedDir)) {
+    fs.mkdirSync(unsortedDir, { recursive: true });
+  }
+
+  mainWindow.webContents.send(
+    "status-update",
+    "🔄 Running OCR and NER on document..."
+  );
 
   try {
-    if (!fs.existsSync(sortedDocumentsDir)) {
-      fs.mkdirSync(sortedDocumentsDir);
-    }
+    const result = await processFileWithPython(filePath);
+    const extractedName = result.name;
 
-    mainWindow.webContents.send('status-update', 'Starting OCR process...');
-    const worker = await createWorker('eng');
-    const { data: { text } } = await worker.recognize(filePath);
-    await worker.terminate();
-    console.log("---- Full OCR Text Start ----\n", text, "\n---- Full OCR Text End ----");
-    
-    // Aggressive Text Cleaning
-    let cleanedText = text.replace(/[^a-zA-Z0-9\s\/\-]/g, '') // Allow / and - for dates
-                           .replace(/\s+/g, ' ')
-                           .trim();
+    if (extractedName && typeof extractedName === 'string' && extractedName.trim()) {
+      // Create folder for this person
+      const sanitized = sanitizeName(extractedName);
+      const userFolder = path.join(sortedDir, sanitized);
+      
+      if (!fs.existsSync(userFolder)) {
+        fs.mkdirSync(userFolder, { recursive: true });
+      }
 
-    mainWindow.webContents.send('status-update', 'OCR finished. Extracting info...');
-
-    let extractedName = 'N/A';
-    let extractedDob = 'N/A';
-    let extractedGender = 'N/A';
-    let extractedAadhaar = 'N/A';
-    let note = cleanedText; // Initialize note with cleaned text
-
-    // Extract Name (looking for patterns like 'Name: [Name]' or just a name after some keywords)
-    const nameRegex = /(?:[A-Z][a-z]+\s){1,3}[A-Z][a-z]+/; // Looks for 2 to 4 capitalized words
-    let match = cleanedText.match(nameRegex);
-    if (match && match[0]) {
-        extractedName = match[0];
-        note = note.replace(match[0], '').trim();
+      const destPath = path.join(userFolder, fileName);
+      moveFile(filePath, destPath);
+      
+      mainWindow.webContents.send(
+        "status-update",
+        `✅ Document sorted under: ${sanitized}`
+      );
+      
+      return { 
+        success: true, 
+        name: sanitized, 
+        details: result 
+      };
+      
     } else {
-        // Fallback: try to find a name without a preceding keyword, often the first capitalized words
-        const fallbackNameRegex = /(?:[A-Z][a-z]+\s){1,3}[A-Z][a-z]+/; // Looks for 2 to 4 capitalized words
-        match = cleanedText.match(fallbackNameRegex);
-        if (match && match[0]) {
-            extractedName = match[0];
-            note = note.replace(match[0], '').trim();
-        }
+      // No name found - move to unsorted
+      const destPath = path.join(unsortedDir, fileName);
+      moveFile(filePath, destPath);
+      
+      mainWindow.webContents.send(
+        "status-update",
+        `⚠️ Could not extract name from ${fileName}, moved to Unsorted`
+      );
+      
+      return { 
+        success: true, 
+        name: null, 
+        message: "No name extracted" 
+      };
     }
-
-    // Extract DOB
-    const dobRegex = /(?:DOB|Date of Birth|Year of Birth):?\s*(\d{2}[\/\-]\d{2}[\/\-]\d{4}|\d{4})/; // DD/MM/YYYY, DD-MM-YYYY or YYYY
-    match = cleanedText.match(dobRegex);
-    if (match && match[1]) {
-        extractedDob = match[1];
-        note = note.replace(match[0], '').trim();
-    }
-
-    // Extract Gender
-    const genderRegex = /(Male|Female)/i;
-    match = cleanedText.match(genderRegex);
-    if (match && match[1]) {
-        extractedGender = match[1];
-        note = note.replace(match[0], '').trim();
-    }
-
-    // Extract Aadhaar Number (12 digits, possibly with spaces)
-    const aadhaarRegex = /(\d{4}\s\d{4}\s\d{4}|\d{12})/; // 12 digits, with or without spaces
-    match = cleanedText.match(aadhaarRegex);
-    if (match && match[1]) {
-        extractedAadhaar = match[1].replace(/\s/g, ''); // Remove spaces if present
-        note = note.replace(match[0], '').trim();
-    }
-
-    // Final formatted output
-    const finalOutput = `Name: ${extractedName}; DOB: ${extractedDob}; Gender: ${extractedGender}; Aadhaar: ${extractedAadhaar}; Note: ${note}`;
-    mainWindow.webContents.send('status-update', `Extracted Info: ${finalOutput}`);
-
-    // For sorting, we still need a name. If not extracted, use a placeholder.
-    const folderName = extractedName !== 'N/A' ? extractedName : 'Unknown_User';
-    const sanitizedFolderName = folderName.replace(/[/\\?%*:|"<>]/g, '-');
-    mainWindow.webContents.send('status-update', `Info found: ${sanitizedFolderName}. Sorting file...`);
-
-    const userFolder = path.join(sortedDocumentsDir, sanitizedFolderName);
-    if (!fs.existsSync(userFolder)) {
-      fs.mkdirSync(userFolder, { recursive: true });
-    }
-
-    const destinationPath = path.join(userFolder, path.basename(filePath));
     
+  } catch (err) {
+    console.error(`❌ Error processing ${fileName}:`, err);
+    
+    // Move to unsorted on error
     try {
-        fs.renameSync(filePath, destinationPath);
-    } catch (err) {
-        if (err.code === 'EXDEV') {
-            fs.copyFileSync(filePath, destinationPath);
-            fs.unlinkSync(filePath);
-        } else {
-            throw err;
-        }
+      const destPath = path.join(unsortedDir, fileName);
+      moveFile(filePath, destPath);
+    } catch (moveErr) {
+      console.error(`Failed to move ${fileName} to unsorted:`, moveErr);
     }
-
-    const successMessage = `Successfully sorted document for ${sanitizedFolderName}.`;
-    mainWindow.webContents.send('status-update', successMessage);
-    return { success: true, message: successMessage };
-
-  } catch (error) {
-    console.error('An error occurred:', error);
-    mainWindow.webContents.send('status-update', `Error: ${error.message}`);
-    return { success: false, message: error.message };
+    
+    mainWindow.webContents.send(
+      "status-update",
+      `❌ Error processing ${fileName}: ${err.message}`
+    );
+    
+    return { 
+      success: false, 
+      message: err.message 
+    };
   }
 });
 
-async function extractAadhaarInfo(text) {
-    // This function is now integrated into the ipcMain.handle block
-    // and is kept as a placeholder or for future expansion if needed.
-    // For now, its logic is directly in the ipcMain.handle block.
-    return { isAadhaar: true, name: null }; // Placeholder return
-}
+ipcMain.handle("get-sorted-documents", async () => {
+  const sortedDir = path.join(__dirname, "Sorted Documents");
+  const result = {};
+
+  if (fs.existsSync(sortedDir)) {
+    const folders = fs.readdirSync(sortedDir, { withFileTypes: true })
+      .filter(dirent => dirent.isDirectory())
+      .map(dirent => dirent.name);
+
+    for (const folder of folders) {
+      const folderPath = path.join(sortedDir, folder);
+      const files = fs.readdirSync(folderPath);
+      result[folder] = files;
+    }
+  }
+
+  return result;
+});

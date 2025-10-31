@@ -1,0 +1,227 @@
+ import sys
+import os
+import json
+import re
+import spacy
+
+try:
+    from openocr import OpenOCR
+except ImportError:
+    print(json.dumps({"error": "The 'openocr' library is not installed. Run: pip install openocr-python"}))
+    sys.exit(1)
+
+# Blacklist for ignoring non-name words (expanded a bit)
+BLACKLIST = {
+    "INDIA", "GOVERNMENT", "GOVERNMENTOF", "GOVERNMENTOFINDIA", "DOB", "YEAR", "BIRTH", "MALE",
+    "FEMALE", "AADHAAR", "NEAR", "SCHOOL", "SARAL", "ALIBAG", "RAIGARH", "AADHAARISPROOF"
+}
+
+# Load spaCy model once globally
+try:
+    nlp = spacy.load("en_core_web_sm")
+except Exception as e:
+    print(json.dumps({"error": f"spaCy model load failed: {str(e)}"}))
+    sys.exit(1)
+
+
+def perform_ocr(image_path):
+    """Run OCR on an image and return structured results (list of {'transcription': ...})."""
+    try:
+        engine = OpenOCR()
+        result, _ = engine(image_path)
+        # expected format: ["<filename>\t<json_string>"]
+        if not result or len(result) == 0:
+            return {"error": f"No OCR results returned for {image_path}"}
+        
+        parts = result[0].split('\t', 1)
+        if len(parts) < 2:
+            return {"error": f"Unexpected OCR result format for {image_path}"}
+        
+        json_data_string = parts[1]
+        return json.loads(json_data_string)
+    except json.JSONDecodeError as e:
+        return {"error": f"Failed to parse OCR JSON for {image_path}: {str(e)}"}
+    except Exception as e:
+        return {"error": f"OCR failed for {image_path}: {str(e)}"}
+
+
+def preclean_boilerplate(text: str) -> str:
+    """
+    Remove common Aadhaar boilerplate or known noise that can be mistaken for names.
+    """
+    if not text:
+        return text
+
+    boilerplate_patterns = [
+        r'Government\s*of\s*India',
+        r'GovernmentofIndia',
+        r'Governmentof',
+        r'Unique\s*Identification\s*Authority\s*of\s*India',
+        r'Aadhaar\s+is\s+proof.*',
+        r'VID[:\s]*\d+',
+        r'VID\d+',
+        r'Enrollment\s*ID[:\s]*\d+',
+        r'EID[:\s]*\d+',
+        r'UID[:\s]*\d+'
+    ]
+    for patt in boilerplate_patterns:
+        text = re.sub(patt, ' ', text, flags=re.IGNORECASE)
+
+    text = re.sub(r'\bA{2,}eid\b', ' ', text, flags=re.IGNORECASE)
+
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def fix_stuck_words(text: str) -> str:
+    """
+    Insert spaces when OCR merges words like 'VijayPendhari' -> 'Vijay Pendhari'
+    or 'ShashankSurendarSingh' -> 'Shashank Surendar Singh'.
+    Also handle dictionary-based known merges.
+    """
+    if not text:
+        return text
+
+    # Dictionary-based corrections for special glued names (apply first)
+    corrections = {
+        "sonalivijay": "sonali vijay",
+        "sonalivijaypendhari": "sonali vijay pendhari",
+    }
+    for stuck, fixed in corrections.items():
+        pattern = re.compile(re.escape(stuck), re.IGNORECASE)
+        text = pattern.sub(fixed, text)
+
+    # Insert space between lowercase followed by uppercase (apply multiple times for chains)
+    prev_text = ""
+    while prev_text != text:
+        prev_text = text
+        text = re.sub(r'([a-z])([A-Z])', r'\1 \2', text)
+
+    # Normalize whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def clean_ocr_text(text: str) -> str:
+    """
+    Full cleaning pipeline:
+      1. Remove boilerplate and noise
+      2. Fix stuck words (camelcase joins + dictionary corrections)
+      3. Normalize spaces
+    """
+    text = preclean_boilerplate(text)
+    text = fix_stuck_words(text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def extract_name(ocr_results):
+    """Extract the most likely name and verify with spaCy."""
+    if not isinstance(ocr_results, list):
+        return None
+
+    raw_text = " ".join([item.get('transcription', '') for item in ocr_results])
+    text = clean_ocr_text(raw_text)
+
+    # Find capitalized word sequences
+    matches = re.findall(
+        r'(?:[A-Z][a-z]+|[A-Z]{2,})(?:\s+(?:[A-Z][a-z]+|[A-Z]{2,})){1,4}',
+        text
+    )
+
+    candidates = []
+    for m in matches:
+        words = [w for w in m.split() if w.upper() not in BLACKLIST]
+        if 2 <= len(words) <= 5:
+            candidates.append(" ".join(words))
+
+    # Use longest candidate - trust regex over spaCy for Aadhaar names
+    if candidates:
+        best_candidate = max(candidates, key=len).title()
+        return best_candidate
+
+    # Try spaCy on full text as fallback only if no regex matches
+    doc_full = nlp(text)
+    person_ents = [ent.text for ent in doc_full.ents if ent.label_ == "PERSON"]
+    if person_ents:
+        return max(person_ents, key=len)
+
+    # Final fallback: simpler pattern
+    fallback = re.search(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3})\b', text)
+    if fallback:
+        return fallback.group(1).title()
+    
+    return None
+
+
+def extract_dob(ocr_results):
+    """Extract DOB in format dd/mm/yyyy."""
+    if not isinstance(ocr_results, list):
+        return None
+    raw_text = " ".join([item.get('transcription', '') for item in ocr_results])
+    text = clean_ocr_text(raw_text)
+    match = re.search(r'(\d{2}/\d{2}/\d{4})', text)
+    return match.group(1) if match else None
+
+
+def extract_aadhaar_number(ocr_results):
+    """Extract last 4 digits of Aadhaar number (from 12-digit sequence if present)."""
+    if not isinstance(ocr_results, list):
+        return None
+    
+    # Look for 12-digit sequences in individual transcriptions first
+    for item in ocr_results:
+        text = item.get('transcription', '')
+        # Skip VID lines
+        if 'VID' in text.upper():
+            continue
+        digits_only = re.sub(r'\D', '', text)
+        if len(digits_only) == 12:
+            return digits_only[-4:]
+    
+    # Fallback: search in combined text but exclude VID
+    text = " ".join([item.get('transcription', '') for item in ocr_results])
+    # Remove VID line before extracting
+    text = re.sub(r'VID[:\s]*\d+', '', text, flags=re.IGNORECASE)
+    digits_only = re.sub(r'\D', '', text)
+    match = re.search(r'(\d{12})', digits_only)
+    if match:
+        return match.group(1)[-4:]
+    return None
+
+
+def process_file(image_path):
+    """Process one Aadhaar image and return structured JSON object."""
+    ocr_results = perform_ocr(image_path)
+    if isinstance(ocr_results, dict) and 'error' in ocr_results:
+        return {"file": os.path.basename(image_path), "error": ocr_results['error']}
+
+    name = extract_name(ocr_results)
+    dob = extract_dob(ocr_results)
+    aadhaar_last4 = extract_aadhaar_number(ocr_results)
+
+    return {
+        "file": os.path.basename(image_path),
+        "name": name,
+        "dob": dob,
+        "aadhaar_last4": aadhaar_last4
+    }
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print(json.dumps({"error": "Usage: python ner.py <file_or_folder_path>"}))
+        sys.exit(1)
+
+    input_path = sys.argv[1]
+    results = []
+
+    if os.path.isdir(input_path):
+        for fname in sorted(os.listdir(input_path)):
+            full_path = os.path.join(input_path, fname)
+            if os.path.isfile(full_path):
+                results.append(process_file(full_path))
+    else:
+        results.append(process_file(input_path))
+
+    print(json.dumps(results, ensure_ascii=False, indent=2))

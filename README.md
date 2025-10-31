@@ -1,55 +1,45 @@
-# Aadhaar Card Sorter
+# AdharSortOpen
 
-This is a desktop application built with Electron.js that automates the process of sorting Aadhaar card image files. It uses offline Optical Character Recognition (OCR) to read the card's details, intelligently extracts the cardholder's name and Aadhaar number, and then moves the file into a clearly named folder.
+AdharSortOpen is a desktop application that automatically sorts Aadhaar card images into folders based on the extracted name.
 
 ## Features
 
-- **Desktop Application:** A simple, clean, and easy-to-use cross-platform desktop app.
-- **Offline OCR:** Uses Tesseract.js to perform OCR locally, so no internet connection is required.
-- **Aadhaar Validation:** Automatically checks if the provided document appears to be a valid Aadhaar card.
-- **Intelligent Extraction:** Extracts both the cardholder's name and the 12-digit Aadhaar number from the document.
-- **Automatic Sorting:** Creates a folder named `[Cardholder Name] - [Aadhaar Number]` and moves the processed image into it.
-- **Robust File Handling:** Safely handles moving files, even from different drives or partitions.
+- **Automatic Sorting:** Automatically sorts Aadhaar card images into folders named after the person on the card.
+- **Bulk Processing:** Process an entire folder of Aadhaar card images at once.
+- **Single File Processing:** Process a single Aadhaar card image.
+- **Error Handling:** Files that cannot be processed are moved to an "Unsorted Documents" folder.
+- **Easy Access:** Buttons to quickly open the "Sorted Documents" and "Unsorted Documents" folders.
 
-## Project Structure
+## Usage
 
-```
-/sorteer
-|-- node_modules/         # Project dependencies
-|-- Sorted Documents/     # Default output directory for sorted files
-|-- index.html            # The application's user interface
-|-- main.js               # The main Electron process (backend logic, OCR, file system)
-|-- preload.js            # Secure bridge between main and renderer processes
-|-- renderer.js           # Frontend logic for the user interface
-|-- package.json          # Project configuration and dependencies
-|-- README.md             # This file
-```
 
-## Setup and Usage
 
-### 1. Install Dependencies
+1.  **Sort a Single File:**
 
-If you have just cloned the project or the `node_modules` folder is missing, run this command to install all necessary dependencies:
+    *   Click the "Sort a File" button.
 
-```bash
-npm install
-```
+    *   Select the Aadhaar card image you want to sort.
 
-### 2. Run the Application
+    *   The application will process the file and move it to a folder named after the cardholder in the "Sorted Documents" directory.
 
-To start the application, run the following command in the project's root directory:
 
-```bash
-npm start
-```
 
-### 3. How to Use
+2.  **Sort a Folder:**
 
-1.  Click the **Import and Sort Document** button.
-2.  Select an Aadhaar card image file (`.png`, `.jpg`, etc.) from your computer.
-3.  The application will process the file and display the status.
-4.  Once finished, the original file will be moved to its new, sorted folder.
+    *   Click the "Sort a Folder" button.
 
-## Output
+    *   Select the folder containing the Aadhaar card images you want to sort.
 
-All sorted documents will be placed in the `Sorted Documents` folder, which is created automatically inside the project directory.
+    *   The application will process all the files in the folder and move them to folders named after the cardholders in the "Sorted Documents" directory.
+
+
+
+3.  **View Sorted Documents:**
+
+    *   Click the "Show Documents" button to open the "Sorted Documents" directory.
+
+
+
+4.  **View Unsorted Documents:**
+
+    *   Click the "View Unsorted" button to open the "Unsorted Documents" directory. This folder contains any files that could not be processed.

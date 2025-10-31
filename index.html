@@ -1,88 +1,804 @@
 <!DOCTYPE html>
 <html>
-<head>
-    <meta charset="UTF-8">
+  <head>
+    <meta charset="UTF-8" />
     <title>Document Sorter</title>
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';">
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap" rel="stylesheet">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="script-src 'self';"
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <style>
-        body {
-            font-family: 'Poppins', sans-serif;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-            background: linear-gradient(to right, #6a11cb, #2575fc);
-            color: #333;
+      :root {
+        --primary-color: #6366f1;
+        --primary-dark: #4f46e5;
+        --secondary-color: #10b981;
+        --accent-color: #f59e0b;
+        --background-color: #f8fafc;
+        --surface-color: #ffffff;
+        --text-color: #1e293b;
+        --text-secondary: #64748b;
+        --border-color: #e2e8f0;
+        --success-color: #10b981;
+        --warning-color: #f59e0b;
+        --error-color: #ef4444;
+        --border-radius: 16px;
+        --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
+        --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.15);
+        --transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: "Poppins", sans-serif;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        margin: 0;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        overflow: hidden;
+      }
+
+      #app-wrapper {
+        width: 95%;
+        height: 95%;
+        display: flex;
+        border-radius: var(--border-radius);
+        background-color: var(--surface-color);
+        box-shadow: var(--shadow-lg);
+        overflow: hidden;
+        animation: fadeIn 0.5s ease;
+      }
+
+      @keyframes fadeIn {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
         }
-        #container {
-            text-align: center;
-            padding: 50px;
-            border-radius: 15px;
-            background-color: #ffffff;
-            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-            width: 90%;
-            max-width: 500px;
+        to {
+          opacity: 1;
+          transform: translateY(0);
         }
-        h1 {
-            font-size: 28px;
-            font-weight: 600;
-            color: #333;
-            margin-bottom: 10px;
+      }
+
+      #control-panel {
+        width: 420px;
+        padding: 40px 32px;
+        background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        border-right: 1px solid var(--border-color);
+        position: relative;
+      }
+
+      #sorted-files-container {
+        flex-grow: 1;
+        padding: 40px;
+        display: flex;
+        flex-direction: column;
+        background-color: var(--background-color);
+        position: relative;
+      }
+
+      #sorted-files-list {
+        overflow-y: auto;
+        flex-grow: 1;
+        margin-top: 20px;
+        padding-right: 10px;
+      }
+
+      #sorted-files-list::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      #sorted-files-list::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      #sorted-files-list::-webkit-scrollbar-thumb {
+        background: var(--border-color);
+        border-radius: 4px;
+      }
+
+      #sorted-files-list::-webkit-scrollbar-thumb:hover {
+        background: var(--text-secondary);
+      }
+
+      /* Header Section */
+      .app-header {
+        text-align: center;
+        margin-bottom: 32px;
+      }
+
+      .logo-container {
+        width: 80px;
+        height: 80px;
+        margin: 0 auto 16px;
+        background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+        border-radius: 20px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 40px;
+        box-shadow: var(--shadow-md);
+        animation: pulse 2s infinite;
+      }
+
+      @keyframes pulse {
+        0%, 100% {
+          transform: scale(1);
         }
-        p {
-            font-size: 16px;
-            color: #666;
-            margin-bottom: 30px;
+        50% {
+          transform: scale(1.05);
         }
-        .btn-group {
-            display: flex;
-            gap: 15px;
-            justify-content: center;
+      }
+
+      h1 {
+        font-size: 28px;
+        font-weight: 700;
+        color: var(--text-color);
+        margin-bottom: 8px;
+        background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+      }
+
+      p#action-description {
+        font-size: 14px;
+        color: var(--text-secondary);
+        line-height: 1.6;
+      }
+
+      /* Statistics Cards */
+      #stats-container {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-bottom: 24px;
+      }
+
+      .stat-card {
+        background: var(--surface-color);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 16px;
+        text-align: center;
+        transition: var(--transition);
+      }
+
+      .stat-card:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .stat-value {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--primary-color);
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .stat-label {
+        font-size: 11px;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        font-weight: 600;
+      }
+
+      #duplicates-badge {
+        position: absolute;
+        top: 24px;
+        right: 24px;
+        background: linear-gradient(135deg, var(--error-color), #dc2626);
+        color: white;
+        padding: 10px 18px;
+        font-size: 13px;
+        font-weight: 600;
+        border-radius: 24px;
+        cursor: pointer;
+        transition: var(--transition);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        box-shadow: var(--shadow-md);
+        z-index: 10;
+      }
+      
+      #duplicates-badge:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-lg);
+      }
+
+      #duplicates-badge.hidden {
+        display: none;
+      }
+
+
+      #sorted-files-container h3 {
+        font-size: 24px;
+        font-weight: 700;
+        color: var(--text-color);
+        margin: 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      #sorted-files-container h3::before {
+        content: '📁';
+        font-size: 28px;
+      }
+
+      #sorted-files-list .placeholder {
+        color: var(--text-secondary);
+        font-style: italic;
+        text-align: center;
+        padding: 80px 20px;
+        font-size: 15px;
+        background: var(--surface-color);
+        border-radius: var(--border-radius);
+        border: 2px dashed var(--border-color);
+      }
+
+      #sorted-files-list .placeholder::before {
+        content: '📂';
+        display: block;
+        font-size: 64px;
+        margin-bottom: 16px;
+        opacity: 0.5;
+      }
+
+
+      #action-layouts {
+        width: 100%;
+        margin-bottom: 24px;
+      }
+
+      .btn-group {
+        display: none;
+        flex-direction: column;
+        width: 100%;
+        gap: 12px;
+      }
+
+      .btn-group.active {
+        display: flex;
+        animation: slideIn 0.3s ease;
+      }
+
+      @keyframes slideIn {
+        from {
+          opacity: 0;
+          transform: translateX(-10px);
         }
-        .btn {
-            background-color: #007bff;
-            color: white;
-            border: none;
-            padding: 15px 30px;
-            font-size: 16px;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+        to {
+          opacity: 1;
+          transform: translateX(0);
         }
-        .btn:hover {
-            background-color: #0056b3;
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0, 123, 255, 0.3);
+      }
+
+      .btn {
+        border: none;
+        padding: 16px 24px;
+        font-size: 15px;
+        font-weight: 600;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: var(--transition);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .btn::before {
+        content: '';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        width: 0;
+        height: 0;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.3);
+        transform: translate(-50%, -50%);
+        transition: width 0.6s, height 0.6s;
+      }
+
+      .btn:hover::before {
+        width: 300px;
+        height: 300px;
+      }
+
+      .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: var(--shadow-md);
+      }
+
+      .btn:active {
+        transform: translateY(0);
+      }
+
+      .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+        transform: none !important;
+      }
+
+      .btn-primary {
+        background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+        color: white;
+        box-shadow: var(--shadow-sm);
+      }
+
+      .btn-secondary {
+        background-color: var(--surface-color);
+        color: var(--text-color);
+        border: 2px solid var(--border-color);
+      }
+      
+      .btn-secondary:hover {
+        background-color: var(--background-color);
+        border-color: var(--primary-color);
+        color: var(--primary-color);
+      }
+
+      .btn span {
+        font-size: 20px;
+        position: relative;
+        z-index: 1;
+      }
+
+      /* Progress Bar */
+      #progress-container {
+        width: 100%;
+        margin-bottom: 16px;
+        display: none;
+      }
+
+      #progress-container.active {
+        display: block;
+        animation: fadeIn 0.3s ease;
+      }
+
+      .progress-bar {
+        width: 100%;
+        height: 8px;
+        background-color: var(--border-color);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 8px;
+      }
+
+      .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--primary-color), var(--secondary-color));
+        width: 0%;
+        transition: width 0.3s ease;
+        border-radius: 4px;
+      }
+
+      .progress-text {
+        font-size: 12px;
+        color: var(--text-secondary);
+        text-align: center;
+      }
+
+      #status {
+        padding: 16px 18px;
+        border-radius: 12px;
+        background: linear-gradient(135deg, #f0f9ff, #e0f2fe);
+        text-align: left;
+        font-size: 13px;
+        color: var(--text-color);
+        width: 100%;
+        font-weight: 500;
+        margin-top: auto;
+        border: 1px solid #bae6fd;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        transition: var(--transition);
+      }
+
+      #status::before {
+        content: '✓';
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 24px;
+        height: 24px;
+        background: var(--success-color);
+        color: white;
+        border-radius: 50%;
+        font-size: 12px;
+        flex-shrink: 0;
+      }
+
+      #status.processing {
+        background: linear-gradient(135deg, #fef3c7, #fde68a);
+        border-color: #fcd34d;
+      }
+
+      #status.processing::before {
+        content: '⟳';
+        background: var(--warning-color);
+        animation: spin 1s linear infinite;
+      }
+
+      #status.error {
+        background: linear-gradient(135deg, #fee2e2, #fecaca);
+        border-color: #fca5a5;
+      }
+
+      #status.error::before {
+        content: '⚠';
+        background: var(--error-color);
+        animation: none;
+      }
+
+      @keyframes spin {
+        from {
+          transform: rotate(0deg);
         }
-        .btn:disabled {
-            background-color: #cccccc;
-            cursor: not-allowed;
-            transform: translateY(0);
-            box-shadow: none;
+        to {
+          transform: rotate(360deg);
         }
-        #status {
-            margin-top: 30px;
-            font-size: 14px;
-            color: #606770;
-            min-height: 20px;
-            font-weight: 600;
+      }
+
+
+      #results-tabs {
+        display: flex;
+        margin-bottom: 24px;
+        background-color: var(--surface-color);
+        border-radius: 12px;
+        padding: 6px;
+        border: 1px solid var(--border-color);
+        box-shadow: var(--shadow-sm);
+      }
+
+      .tab-button {
+        flex: 1;
+        padding: 12px 16px;
+        font-size: 14px;
+        font-weight: 600;
+        color: var(--text-secondary);
+        background: none;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: var(--transition);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        position: relative;
+      }
+
+      .tab-button:hover {
+        color: var(--primary-color);
+        background-color: var(--background-color);
+      }
+
+      .tab-button.active {
+        color: white;
+        background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+        box-shadow: var(--shadow-sm);
+      }
+
+      .tab-button.active:hover {
+        color: white;
+      }
+
+      #sorted-files-list .folder {
+        margin-bottom: 16px;
+        background-color: var(--surface-color);
+        border-radius: var(--border-radius);
+        box-shadow: var(--shadow-sm);
+        overflow: hidden;
+        border: 1px solid var(--border-color);
+        transition: var(--transition);
+        animation: slideUp 0.3s ease;
+      }
+
+      @keyframes slideUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
         }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      #sorted-files-list .folder:hover {
+        box-shadow: var(--shadow-md);
+        transform: translateY(-2px);
+      }
+
+      #sorted-files-list .folder-header {
+        font-weight: 600;
+        font-size: 16px;
+        padding: 16px 20px;
+        background: linear-gradient(135deg, var(--primary-color), var(--primary-dark));
+        color: white;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        cursor: pointer;
+        user-select: none;
+      }
+
+      .folder-header-left {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .folder-icon {
+        font-size: 20px;
+      }
+
+      .file-count {
+        background: rgba(255, 255, 255, 0.2);
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      #sorted-files-list .file {
+        padding: 14px 20px 14px 52px;
+        font-size: 14px;
+        color: var(--text-color);
+        border-bottom: 1px solid var(--border-color);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        transition: var(--transition);
+        position: relative;
+      }
+
+      #sorted-files-list .file::before {
+        content: '📄';
+        position: absolute;
+        left: 20px;
+        font-size: 18px;
+        opacity: 0.6;
+      }
+
+      #sorted-files-list .file:hover {
+        background-color: var(--background-color);
+        padding-left: 56px;
+      }
+
+      #sorted-files-list .file:last-child {
+        border-bottom: none;
+      }
+
+      /* Toast Notifications */
+      #toast-container {
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        pointer-events: none;
+      }
+
+      .toast {
+        background: white;
+        padding: 16px 20px;
+        border-radius: 12px;
+        box-shadow: var(--shadow-lg);
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 300px;
+        animation: slideInRight 0.3s ease;
+        pointer-events: all;
+        border-left: 4px solid var(--primary-color);
+      }
+
+      @keyframes slideInRight {
+        from {
+          opacity: 0;
+          transform: translateX(100px);
+        }
+        to {
+          opacity: 1;
+          transform: translateX(0);
+        }
+      }
+
+      .toast.success {
+        border-left-color: var(--success-color);
+      }
+
+      .toast.error {
+        border-left-color: var(--error-color);
+      }
+
+      .toast.warning {
+        border-left-color: var(--warning-color);
+      }
+
+      .toast-icon {
+        font-size: 24px;
+        flex-shrink: 0;
+      }
+
+      .toast-content {
+        flex: 1;
+      }
+
+      .toast-title {
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--text-color);
+        margin-bottom: 2px;
+      }
+
+      .toast-message {
+        font-size: 13px;
+        color: var(--text-secondary);
+      }
+
+      /* Loading Skeleton */
+      .skeleton {
+        background: linear-gradient(
+          90deg,
+          var(--border-color) 25%,
+          #f0f0f0 50%,
+          var(--border-color) 75%
+        );
+        background-size: 200% 100%;
+        animation: loading 1.5s infinite;
+        border-radius: 8px;
+      }
+
+      @keyframes loading {
+        0% {
+          background-position: 200% 0;
+        }
+        100% {
+          background-position: -200% 0;
+        }
+      }
+
+      @keyframes slideOutRight {
+        from {
+          opacity: 1;
+          transform: translateX(0);
+        }
+        to {
+          opacity: 0;
+          transform: translateX(100px);
+        }
+      }
+
+      .skeleton-folder {
+        height: 60px;
+        margin-bottom: 16px;
+      }
+
+      .skeleton-file {
+        height: 48px;
+        margin-bottom: 12px;
+      }
+
+      /* Collapsed folder state */
+      .folder.collapsed .folder-content {
+        display: none;
+      }
+
+      .folder-content {
+        display: block;
+      }
     </style>
-</head>
-<body>
-    <div id="container">
-        <h1>📄 Document Sorter</h1>
-        <p>Automatically sort your documents with a single click.</p>
-        <div class="btn-group">
-            <button id="import-btn" class="btn">Sort a File</button>
-            <button id="import-folder-btn" class="btn">Sort a Folder</button>
+  </head>
+  <body>
+    <div id="toast-container"></div>
+    
+    <div id="app-wrapper">
+      <div id="control-panel">
+        <div class="app-header">
+          <div class="logo-container">📄</div>
+          <h1>Document Sorter</h1>
+          <p id="action-description">
+            Organize your documents with AI-powered sorting
+          </p>
         </div>
-        <div id="status">Ready to start.</div>
+
+        <div id="stats-container">
+          <div class="stat-card">
+            <span class="stat-value" id="total-processed">0</span>
+            <span class="stat-label">Processed</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="total-sorted">0</span>
+            <span class="stat-label">Sorted</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="total-people">0</span>
+            <span class="stat-label">People</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-value" id="success-rate">100%</span>
+            <span class="stat-label">Success Rate</span>
+          </div>
+        </div>
+
+        <div id="results-tabs">
+          <button class="tab-button active" data-type="image">🖼️ Images</button>
+          <button class="tab-button" data-type="pdf">📑 PDFs</button>
+        </div>
+
+        <div id="action-layouts">
+          <div class="btn-group active" data-tab="image">
+            <button id="image-folder-btn" class="btn btn-primary">
+              <span>�</span> Sort Image Folder
+            </button>
+            <button id="image-file-btn" class="btn btn-secondary">
+              <span>🖼️</span> Sort Single Image
+            </button>
+          </div>
+
+          <div class="btn-group" data-tab="pdf">
+            <button id="pdf-folder-btn" class="btn btn-primary">
+              <span>📁</span> Sort PDF Folder
+            </button>
+            <button id="pdf-file-btn" class="btn btn-secondary">
+              <span>📑</span> Sort Single PDF
+            </button>
+          </div>
+        </div>
+
+        <div id="progress-container">
+          <div class="progress-bar">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="progress-text" id="progress-text">Processing... 0%</div>
+        </div>
+
+        <div id="status">Ready to sort your documents.</div>
+      </div>
+
+      <div id="sorted-files-container">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3>Sorted Documents</h3>
+          <div id="duplicates-badge" class="hidden">
+            <span>⚠️</span> Review Duplicates (<span id="duplicate-count">0</span>)
+          </div>
+        </div>
+
+        <div id="sorted-files-list">
+          <p class="placeholder">
+            Your sorted documents will appear here once processing is complete
+          </p>
+        </div>
+      </div>
     </div>
+
     <script src="./renderer.js"></script>
-</body>
+  </body>
 </html>
